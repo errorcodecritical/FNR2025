@@ -14,7 +14,7 @@
 
 PioEncoder encoder(PIN_ENC_A_M1);
 
-double kc = 0.0, kp = 0.0, ki = 0.0, kd = 0.00, tc = 1.0 / 1000.0;
+double kc = 0.0, tc = 1e-3f, kp = 1.0, ki = 0.0, kd = 0.00;
 
 double get_rpm() {
     static double rpm = 0;
@@ -37,18 +37,9 @@ double process(double pwm) {
         analogWrite(PIN_IN2_M1, 0);
     } else {
         analogWrite(PIN_IN1_M1, 0);
-        analogWrite(PIN_IN2_M1, pwm);    
+        analogWrite(PIN_IN2_M1, abs(pwm));    
     }
     return get_rpm();
-}
-
-double pid(double setpoint, double measured, double kp, double ki, double kd, double dt) {
-    static double integral = 0, prev_error = 0;
-    double error = setpoint - measured;
-    integral += error * dt;
-    double derivative = (error - prev_error) / dt;
-    prev_error = error;
-    return (kp * error) + (ki * integral) + (kd * derivative);
 }
 
 void setup() {
@@ -61,22 +52,15 @@ void setup() {
 
     delay(4000);
     
-    findCriticalValues(&kc, &tc, process);
-    calculatePID(kc, tc, &kp, &ki, &kd);
+    autopid(kc, tc, kp, ki, kd, 100, process);
 }
 
 void loop() {
-    double setpoint = -100, measured = get_rpm();
+    static double setpoint = -100, measured = get_rpm();
     double pwm = pid(setpoint, measured, kp, ki, kd, 10);
-
-    if (pwm > 0) {
-        analogWrite(PIN_IN1_M1, pwm);
-        analogWrite(PIN_IN2_M1, 0);
-    } else {
-        analogWrite(PIN_IN1_M1, 0);
-        analogWrite(PIN_IN2_M1, abs(pwm));    
-    }
     
     delay(10);
+    
+    measured = process(pwm);
     Serial.println("Rotations per Minute:" + String(get_rpm()));
 }

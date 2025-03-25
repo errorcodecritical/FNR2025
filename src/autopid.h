@@ -1,46 +1,57 @@
 #include <Arduino.h>
 
-// Function to determine critical gain (Kc) and oscillation period (Tc)
-void findCriticalValues(double *Kc, double *Tc, double(*process)(double)) {
-    double setpoint = 100, output = 0, prev_output = 0;
-    double Kp = 1.0;  // Initial proportional gain
+inline uint32_t tick() {
+    return time_us_32();
+}
+
+// Function to determine critical gain (kc) and oscillation period (tc)
+void autopid(double& kc, double& tc, double& kp, double& ki, double& kd, double setpoint, double(*process)(double)) {
+    double output = 0, last_output = 0;
+    double last_peak_time = tick(), first_peak_time = tick();
     int oscillation_count = 0;
-    double last_peak_time = time_us_32(), first_peak_time = time_us_32();
     int first_peak_detected = 0;
 
-    Serial.printf("Finding Kc and Tc...\n");
+    Serial.printf("Finding kc and tc...\n");
 
-    while (oscillation_count < 5) {  // Wait for 5 oscillations
-        double control = Kp * (setpoint - output);
+    // Wait for 5 oscillations
+    while (oscillation_count < 5) {
+        double control = kp * (setpoint - output);
         output = process(control);
 
-        Serial.printf("RPM: %f, Kp: %f\n", output, Kp);
+        Serial.printf("rpm:%f, kp:%f\n", output, kp);
 
-        if ((setpoint - output) * (setpoint - prev_output) < 0) {  // Detect sign change (zero crossing)
+        // Detect sign change (zero crossing)
+        if ((setpoint - output) * (setpoint - last_output) < 0) {
             if (!first_peak_detected) {
                 first_peak_time = last_peak_time;
                 first_peak_detected = 1;
             } else {
-                *Tc = (last_peak_time - first_peak_time) / (oscillation_count * 1e6f);
+                tc = (last_peak_time - first_peak_time) / (oscillation_count * 1e6f);
             }
             oscillation_count++;
-            last_peak_time = time_us_32();
+            last_peak_time = tick();
         }
 
-        prev_output = output;
-        Kp += 0.001;  // Increase Kp to find instability
-        delay(10);  // Sleep 100ms
+        last_output = output;
+        kp += 0.001;  // Increase kp to find instability
+        delay(10);  // Sleep 10ms
     }
 
-    *Kc = Kp;
-    Serial.printf("Critical Gain (Kc): %f, Oscillation Period (Tc): %f\n", *Kc, *Tc);
+    kc = kp;
+
+    // Calculate PID parameters - based on Ziegler-Nichols. Coefficients have been slightly adjusted.
+    kp = 0.06 * kc;
+    ki = 2 * (kp) / tc;
+    kd = (kp) * (tc / 8);
+
+    Serial.printf("kp%f, ki:%f, kd:%f\n", kp, ki, kd);
 }
 
-// Function to calculate PID parameters based on Ziegler-Nichols
-void calculatePID(double Kc, double Tc, double *Kp, double *Ki, double *Kd) {
-    *Kp = 0.06 * Kc;
-    *Ki = 2 * (*Kp) / Tc;
-    *Kd = (*Kp) * (Tc / 8);
-
-    Serial.printf("Kp: %f, Ki: %f, Kd: %f\n", *Kp, *Ki, *Kd);
+double pid(double setpoint, double measured, double kp, double ki, double kd, double dt) {
+    static double integral = 0, prev_error = 0;
+    double error = setpoint - measured;
+    integral += error * dt;
+    double derivative = (error - prev_error) / dt;
+    prev_error = error;
+    return (kp * error) + (ki * integral) + (kd * derivative);
 }
